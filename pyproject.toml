@@ -2,7 +2,7 @@
 authors = [{name = "IgnorantCopy", email = "231880174@smail.nju.edu.cn"}]
 dependencies = []
 name = "Neuroscience"
-requires-python = ">= 3.11"
+requires-python = ">=3.8,<3.9"
 version = "0.1.0"
 
 [build-system]
@@ -17,3 +17,7 @@ platforms = ["win-64"]
 neuroscience = { path = ".", editable = true }
 
 [tool.pixi.tasks]
+
+[tool.pixi.dependencies]
+psychopy = ">=2022.2.5,<2023"
+pixi-pycharm = ">=0.0.8,<0.0.9"
