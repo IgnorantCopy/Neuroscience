@@ -63,7 +63,8 @@ class Neuron(Node):
 
         self.dx = 20.0  # spatial step (μm)
         self.n_x = int(l / self.dx) + 1  # number of spatial steps
-        self.i_inj = 0.0  # input current (mA)
+        self.i_inj = []  # input current (mA)
+        self.current = 0.0
         self.v = -65.0 * np.ones(self.n_x)  # membrane potential (mV)
         self.n = self.init_n * np.ones(self.n_x)
         self.m = self.init_m * np.ones(self.n_x)
@@ -88,7 +89,9 @@ class Neuron(Node):
         self.m = self.m + dt * (alpha_m * (1.0 - self.m) - beta_m * self.m)
         self.h = self.h + dt * (alpha_h * (1.0 - self.h) - beta_h * self.h)
 
-        i_inj = np.array([self.i_inj] + [0.0] * (self.n_x - 1))
+        self.current = sum(self.i_inj)
+        self.i_inj = []
+        i_inj = np.array([self.current] + [0.0] * (self.n_x - 1))
 
         self.v = self.v + dt / self.c_m * (d2v_dx2 * (self.d * 1e4) / (4 * self.r_a)
                                            - self.g_l * (self.v - self.e_l)
@@ -98,7 +101,8 @@ class Neuron(Node):
 
     def reset(self):
         self.t = 0.0
-        self.i_inj = 0.0
+        self.i_inj = []
+        self.current = 0.0
         self.v = -65.0 * np.ones(self.n_x)
         self.n = self.init_n * np.ones(self.n_x)
         self.m = self.init_m * np.ones(self.n_x)
@@ -125,7 +129,7 @@ class CurrentInjector(Node):
 
 
 class Synapse(Node):
-    def __init__(self, pre_node, post_node: Neuron, g=10.0, e_syn=0.0, delay=0.0):
+    def __init__(self, pre_node, post_node: Neuron, g=10.0, e_syn=0.0, delay=0.0, weight=1.0):
         """
         Constructor for Synapse class.
         :param pre_node: node before the synapse
@@ -140,6 +144,7 @@ class Synapse(Node):
         self.g = g
         self.e_syn = e_syn
         self.delay = delay
+        self.weight = weight
         self.record = np.zeros(int(self.delay / 0.01) + 1)
 
     def step(self, dt=0.01):
@@ -147,10 +152,10 @@ class Synapse(Node):
         for i in range(1, len(self.record)):
             self.record[i - 1] = self.record[i]
         if isinstance(self.pre_node, Neuron):
-            self.record[-1] = -self.g * (self.pre_node.v[-1] - self.e_syn)
+            self.record[-1] = self.weight * self.g * (self.pre_node.v[-1] - self.e_syn)
         elif isinstance(self.pre_node, CurrentInjector):
-            self.record[-1] = self.pre_node.i
-        self.post_node.i_inj = self.record[0]
+            self.record[-1] = self.weight * self.pre_node.i
+        self.post_node.i_inj.append(self.record[0])
 
     def reset(self):
         self.t = 0.0
@@ -158,23 +163,23 @@ class Synapse(Node):
 
 
 class Recorder:
-    def __init__(self, t, *nodes: Neuron):
-        self.nodes = nodes
+    def __init__(self, t, *nodes_recorded: Neuron):
+        self.nodes_recorded = nodes_recorded
+        self.nodes = set()
         self.dt = 0.01
         self.t = 0
         self.n_t = int(t / self.dt) + 1
-        self.v = [np.ones((len(nodes[i].v), self.n_t)) * nodes[i].v[0] for i in range(len(nodes))] if len(nodes) > 0 else None
-        self.i = [np.zeros(self.n_t) for _ in range(len(nodes))] if len(nodes) > 0 else None
+        self.v = [np.ones((len(nodes_recorded[i].v), self.n_t)) * nodes_recorded[i].v[0] for i in range(len(nodes_recorded))] if len(nodes_recorded) > 0 else None
+        self.i = [np.zeros(self.n_t) for _ in range(len(nodes_recorded))] if len(nodes_recorded) > 0 else None
 
     def update(self, node: Neuron):
-        if len(self.nodes) <= 0:
+        if len(self.nodes_recorded) <= 0:
             return
         try:
-            index = self.nodes.index(node)
+            index = self.nodes_recorded.index(node)
             self.v[index][:, self.t] = node.v
-            self.i[index][self.t] = node.i_inj
+            self.i[index][self.t] = node.current
         except ValueError as e:
-            # print(e)
             return
 
     def run_network(self, *synapses):
@@ -183,17 +188,20 @@ class Recorder:
         :param synapses: list of synapses
         :return: None
         """
-        last_node = None
+        for synapse in synapses:
+            self.nodes.add(synapse.pre_node)
+            self.nodes.add(synapse.post_node)
+        for synapse in synapses:
+            self.nodes.discard(synapse.pre_node)
         for _ in tqdm(range(1, self.n_t)):
             self.t += 1
             for synapse in synapses:
-                if synapse.pre_node is not last_node:
-                    synapse.pre_node.step(self.dt)
-                    self.update(synapse.pre_node)
+                synapse.pre_node.step(self.dt)
+                self.update(synapse.pre_node)
                 synapse.step(self.dt)
-                synapse.post_node.step(self.dt)
-                last_node = synapse.post_node
-                self.update(synapse.post_node)
+            for node in self.nodes:
+                node.step(self.dt)
+                self.update(node)
 
 
 if __name__ == '__main__':
