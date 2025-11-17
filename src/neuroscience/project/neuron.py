@@ -109,6 +109,44 @@ class Neuron(Node):
         self.h = self.init_h * np.ones(self.n_x)
 
 
+class NeuronGroup(Node):
+    def __init__(self, num_neurons, **neuron_params):
+        """
+        Constructor for NeuronGroup class.
+        :param num_neurons: number of neurons in the group
+        :param neuron_params: parameters for the Neuron class
+        """
+        super().__init__()
+        self.neurons = [Neuron(**neuron_params) for _ in range(num_neurons)]
+    
+    def step(self, dt=0.01):
+        self.t += dt
+        for neuron in self.neurons:
+            neuron.step(dt)
+    
+    def reset(self):
+        self.t = 0.0
+        for neuron in self.neurons:
+            neuron.reset()
+
+    def connect(self, connect_group, connect_pattern=None, p=1, **synapse_params):
+        """
+        connect this neuron group to another neuron group fokkowing the connect_pattern
+        """
+        synapses = []
+        if connect_pattern is None:
+            for pre_neuron in self.neurons:
+                for post_neuron in connect_group.neurons:
+                    if np.random.rand() <= p:
+                        synapses.append(Synapse(pre_neuron, post_neuron, **synapse_params))
+        else:
+            for i,pre_neuron in enumerate(self.neurons):
+                for j,post_neuron in enumerate(connect_group.neurons):
+                    if connect_pattern(i,j) and np.random.rand() <= p:
+                        synapses.append(Synapse(pre_neuron, post_neuron, **synapse_params))
+        return synapses
+
+
 class CurrentInjector(Node):
     def __init__(self, i_fn):
         """
