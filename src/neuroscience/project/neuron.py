@@ -66,6 +66,7 @@ class Neuron(Node):
         self.i_inj = []  # input current (mA)
         self.current = 0.0
         self.v = -65.0 * np.ones(self.n_x)  # membrane potential (mV)
+        self.last_v = -65.0
         self.n = self.init_n * np.ones(self.n_x)
         self.m = self.init_m * np.ones(self.n_x)
         self.h = self.init_h * np.ones(self.n_x)
@@ -93,6 +94,7 @@ class Neuron(Node):
         self.i_inj = []
         i_inj = np.array([self.current] + [0.0] * (self.n_x - 1))
 
+        self.last_v = self.v[-1]
         self.v = self.v + dt / self.c_m * (d2v_dx2 * (self.d * 1e4) / (4 * self.r_a)
                                            - self.g_l * (self.v - self.e_l)
                                            - self.g_k * (self.v - self.e_k) * (self.n ** 4)
@@ -107,6 +109,47 @@ class Neuron(Node):
         self.n = self.init_n * np.ones(self.n_x)
         self.m = self.init_m * np.ones(self.n_x)
         self.h = self.init_h * np.ones(self.n_x)
+
+    def is_spike(self):
+        return self.last_v < 0 <= self.v[-1]
+
+
+class NeuronGroup(Node):
+    def __init__(self, num_neurons, **neuron_params):
+        """
+        Constructor for NeuronGroup class.
+        :param num_neurons: number of neurons in the group
+        :param neuron_params: parameters for the Neuron class
+        """
+        super().__init__()
+        self.neurons = [Neuron(**neuron_params) for _ in range(num_neurons)]
+    
+    def step(self, dt=0.01):
+        self.t += dt
+        for neuron in self.neurons:
+            neuron.step(dt)
+    
+    def reset(self):
+        self.t = 0.0
+        for neuron in self.neurons:
+            neuron.reset()
+
+    def connect(self, connect_group, connect_pattern=None, p=1, **synapse_params):
+        """
+        connect this neuron group to another neuron group following the connect_pattern
+        """
+        synapses = []
+        if connect_pattern is None:
+            for pre_neuron in self.neurons:
+                for post_neuron in connect_group.neurons:
+                    if np.random.rand() <= p:
+                        synapses.append(Synapse(pre_neuron, post_neuron, **synapse_params))
+        else:
+            for i, pre_neuron in enumerate(self.neurons):
+                for j, post_neuron in enumerate(connect_group.neurons):
+                    if connect_pattern(i, j) and np.random.rand() <= p:
+                        synapses.append(Synapse(pre_neuron, post_neuron, **synapse_params))
+        return synapses
 
 
 class CurrentInjector(Node):
@@ -168,6 +211,7 @@ class Recorder:
         self.nodes = set()
         self.dt = 0.01
         self.t = 0
+        self.T = t
         self.n_t = int(t / self.dt) + 1
         self.v = [np.ones((len(nodes_recorded[i].v), self.n_t)) * nodes_recorded[i].v[0] for i in range(len(nodes_recorded))] if len(nodes_recorded) > 0 else None
         self.i = [np.zeros(self.n_t) for _ in range(len(nodes_recorded))] if len(nodes_recorded) > 0 else None
