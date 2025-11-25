@@ -12,6 +12,7 @@ class Network(Node):
         self.recoder = self.add_recoder(0)
         self.optimizer = self.add_optimizer()
         self.out_spike = []
+        self.nodes = set()
 
     def add_current_injector(self, i_fn) -> CurrentInjector:
         current_injector = CurrentInjector(i_fn)
@@ -73,18 +74,14 @@ class Network(Node):
 
 
     def step(self, dt=0.01):
-        nodes = set()
-        for synapse in self.synapses:
-            nodes.add(synapse.pre_node)
-            nodes.add(synapse.post_node)
-        for synapse in self.synapses:
-            nodes.discard(synapse.pre_node)
-
+        self.t += dt
         for synapse in self.synapses:
             synapse.pre_node.step(dt)
             synapse.step(dt)
-        for node in nodes:
+        for node in self.nodes:
             node.step(dt)
+        for node in self.layers[-1]["neurons"]:
+            self.out_spike[node.index] += node.is_spike()
         self.optimizer.step()
 
     def reset(self):
@@ -100,6 +97,12 @@ class Network(Node):
 
     def run(self, t, dt=0.01):
         self.out_spike = np.zeros(len(self.layers[-1]["neurons"]))
+        for synapse in self.synapses:
+            self.nodes.add(synapse.pre_node)
+            self.nodes.add(synapse.post_node)
+        for synapse in self.synapses:
+            self.nodes.discard(synapse.pre_node)
+
         n_t = int(t / dt)
         for i in range(n_t):
             self.step(dt)
