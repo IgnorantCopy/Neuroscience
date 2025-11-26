@@ -1,39 +1,56 @@
 from neuron import *
-from optimizer import STDP
-from typing import List, Dict, Callable
+from typing import List
 
 
 class Network(Node):
-    def __init__(self):
+    def __init__(self, layers: List[Union[Neuron, NeuronGroup]], **synapse_params):
         super().__init__()
-        self.injector = []
-        self.layers: List[Dict] = []
-        self.synapses: List[Synapse] = []
-        self.recoder = self.add_recoder(0)
-        self.optimizer = self.add_optimizer()
-        self.out_spike = []
-        self.nodes = set()
+        self.injectors = []
+        self.layers = []
+        self.synapses = []
+        self.in_synapses = []
+        self.recoder = self.update_recoder(0)
+        self.make_layers(layers, synapse_params)
+        self.out_spike = np.zeros(len(self.layers[-1].neurons))
 
-    def add_current_injector(self, i_fn) -> CurrentInjector:
+    def add_current_injector(self, i_fn, **synapses_params) -> CurrentInjector:
         current_injector = CurrentInjector(i_fn)
-        self.injector.append(current_injector)
+        self.injectors.append(current_injector)
+        synapses = SynapseGroup(current_injector, self.layers[0], **synapses_params)
+        self.in_synapses.append(synapses)
         return current_injector
 
-    def add_layer(self, num_neurons: int, **neuron_params) -> NeuronGroup:
-        layer = NeuronGroup(num_neurons, **neuron_params)
-        layer_info = {
-            "group": layer,
-            "num": num_neurons,
-            "params": neuron_params,
-            "neurons": layer.neurons,
-        }
-        self.layers.append(layer_info)
-        return layer
+    def make_layers(self, layers: List[Union[Neuron, NeuronGroup]], synapse_params):
+        self.add_layer(layers[0])
+        for i in range(1, len(layers)):
+            self.add_layer(layers[i])
+            self.add_synapse(self.layers[-2], self.layers[-1], synapse_params)
 
-    def add_synapse(self, pre_neuron, post_neuron, **synapse_params) -> Synapse:
-        synapse = Synapse(pre_neuron, post_neuron, **synapse_params)
+    def add_layer(self, layer: Union[Neuron, NeuronGroup]):
+        if isinstance(layer, Neuron):
+            self.layers.append(NeuronGroup(1, **layer.hyper_parameters()))
+        elif isinstance(layer, NeuronGroup):
+            self.layers.append(layer)
+        else:
+            raise ValueError(f"Invalid layer type {type(layer)}")
+
+    def add_synapse(self, pre_neuron, post_neuron, synapse_params):
+        synapse = SynapseGroup(pre_neuron, post_neuron, weight_pattern=lambda i, j: np.random.randn(), **synapse_params)
         self.synapses.append(synapse)
-        return synapse
+
+    def update_synapse(self, index, connect_pattern=None, weight_pattern=None, p=1, **synapse_params):
+        original_params = self.synapses[index].hyper_parameters()
+        original_params.update(synapse_params)
+        connect_pattern = connect_pattern or self.synapses[index].connect_pattern
+        weight_pattern = weight_pattern or self.synapses[index].weight_pattern
+        self.synapses[index].update_params(connect_pattern=connect_pattern, weight_pattern=weight_pattern, p=p, **original_params)
+
+    def update_in_synapse(self, index, connect_pattern=None, weight_pattern=None, p=1, **synapse_params):
+        original_params = self.in_synapses[index].hyper_parameters()
+        original_params.update(synapse_params)
+        connect_pattern = connect_pattern or self.in_synapses[index].connect_pattern
+        weight_pattern = weight_pattern or self.in_synapses[index].weight_pattern
+        self.in_synapses[index].update_params(connect_pattern=connect_pattern, weight_pattern=weight_pattern, p=p, **original_params)
 
     def add_connect(self, layer1, layer2=-1, connect_pattern=None, p=1, **synapse_params) -> List[Synapse]:
         """
@@ -54,58 +71,49 @@ class Network(Node):
             self.synapses.append(synapse)
         return synapses
 
-    def add_recoder(self, recoder_t) -> Recorder:
+    def update_recoder(self, recoder_t) -> Recorder:
         neurons = []
         for layer in self.layers:
-            for neuron in layer["neurons"]:
-                neurons.append(neuron)
+            neurons.extend(layer.neurons)
         recoder = Recorder(recoder_t, *neurons)
         self.recoder = recoder
         return recoder
 
-    def add_optimizer(self, tau_pre: float = 2., tau_post: float = 2., f_pre: Callable = lambda x: x, f_post: Callable = lambda x: x) -> STDP:
-        optimizer = STDP(self.recoder, self.synapses, tau_pre, tau_post, f_pre, f_post)
-        self.optimizer = optimizer
-        return optimizer
-
     def run_network(self):
         """Run the network by running the recoder."""
-        self.recoder.run_network(*self.synapses)
-
+        synapses = []
+        for synapse in self.in_synapses:
+            synapses.extend(synapse.synapse_groups)
+        for synapse in self.synapses:
+            synapses.extend(synapse.synapse_groups)
+        self.recoder.run_network(*synapses)
 
     def step(self, dt=0.01):
         self.t += dt
-        for synapse in self.synapses:
-            synapse.pre_node.step(dt)
-            synapse.step(dt)
-        for node in self.nodes:
+        for synapses in self.in_synapses:
+            for synapse in synapses.synapses:
+                synapse.pre_node.step(dt)
+                synapse.step(dt)
+        for synapses in self.synapses:
+            for synapse in synapses.synapses:
+                synapse.pre_node.step(dt)
+                synapse.step(dt)
+        for i, node in enumerate(self.layers[-1].neurons):
             node.step(dt)
-        for node in self.layers[-1]["neurons"]:
-            self.out_spike[node.index] += node.is_spike()
-        self.optimizer.step()
+            self.out_spike[i] += node.is_spike()
 
     def reset(self):
-        for injector in self.injector:
+        for injector in self.injectors:
             injector.reset()
         for layer in self.layers:
-            for neuron in layer["neurons"]:
+            for neuron in layer.neurons:
                 neuron.reset()
         for synapse in self.synapses:
             synapse.reset()
-        self.optimizer.reset()
-        self.out_spike = np.zeros(len(self.layers[-1]["neurons"]))
+        for synapse in self.in_synapses:
+            synapse.reset()
 
     def run(self, t, dt=0.01):
-        self.out_spike = np.zeros(len(self.layers[-1]["neurons"]))
-        for synapse in self.synapses:
-            self.nodes.add(synapse.pre_node)
-            self.nodes.add(synapse.post_node)
-        for synapse in self.synapses:
-            self.nodes.discard(synapse.pre_node)
-
         n_t = int(t / dt)
         for i in range(n_t):
             self.step(dt)
-        self.optimizer.apply()
-
-

@@ -1,6 +1,7 @@
 import numpy as np
 from tqdm import tqdm
 from abc import abstractmethod, ABC
+from typing import Union, Optional, Callable
 
 
 class Node(ABC):
@@ -113,6 +114,23 @@ class Neuron(Node):
     def is_spike(self):
         return self.last_v < 0 <= self.v[-1]
 
+    def hyper_parameters(self):
+        return {
+            'c_m': self.c_m,
+            'g_l': self.g_l,
+            'g_k': self.g_k,
+            'g_na': self.g_na,
+            'n': self.n,
+            'm': self.m,
+            'h': self.h,
+            'e_l': self.e_l,
+            'e_k': self.e_k,
+            'e_na': self.e_na,
+            'd': self.d,
+            'l': self.l,
+            'r_a': self.r_a
+        }
+
 
 class NeuronGroup(Node):
     def __init__(self, num_neurons, **neuron_params):
@@ -122,6 +140,7 @@ class NeuronGroup(Node):
         :param neuron_params: parameters for the Neuron class
         """
         super().__init__()
+        assert num_neurons > 0, "Number of neurons must be greater than 0"
         self.neurons = [Neuron(**neuron_params) for _ in range(num_neurons)]
     
     def step(self, dt=0.01):
@@ -134,22 +153,8 @@ class NeuronGroup(Node):
         for neuron in self.neurons:
             neuron.reset()
 
-    def connect(self, connect_group, connect_pattern=None, p=1, **synapse_params):
-        """
-        connect this neuron group to another neuron group following the connect_pattern
-        """
-        synapses = []
-        if connect_pattern is None:
-            for pre_neuron in self.neurons:
-                for post_neuron in connect_group.neurons:
-                    if np.random.rand() <= p:
-                        synapses.append(Synapse(pre_neuron, post_neuron, **synapse_params))
-        else:
-            for i, pre_neuron in enumerate(self.neurons):
-                for j, post_neuron in enumerate(connect_group.neurons):
-                    if connect_pattern(i, j) and np.random.rand() <= p:
-                        synapses.append(Synapse(pre_neuron, post_neuron, **synapse_params))
-        return synapses
+    def hyper_parameters(self):
+        return self.neurons[0].hyper_parameters()
 
 
 class CurrentInjector(Node):
@@ -172,7 +177,8 @@ class CurrentInjector(Node):
 
 
 class Synapse(Node):
-    def __init__(self, pre_node, post_node: Neuron, g=10.0, e_syn=0.0, delay=0.0, weight=1.0):
+    def __init__(self, pre_node: Union[CurrentInjector, Neuron], post_node: Neuron,
+                 g=10.0, e_syn=0.0, delay=0.0, weight=1.0):
         """
         Constructor for Synapse class.
         :param pre_node: node before the synapse
@@ -180,6 +186,7 @@ class Synapse(Node):
         :param g: conductance (S/cm^2)
         :param e_syn: leak reversal potential (mV)
         :param delay: time delay (ms)
+        :param weight: synaptic strength
         """
         super().__init__()
         self.pre_node = pre_node
@@ -204,6 +211,70 @@ class Synapse(Node):
         self.t = 0.0
         self.record = np.zeros(int(self.delay / 0.01) + 1)
 
+    def hyper_parameters(self):
+        return {
+            'g': self.g,
+            'e_syn': self.e_syn,
+            'delay': self.delay,
+            'weight': self.weight
+        }
+
+    def update_params(self, **params):
+        for key, value in params.items():
+            setattr(self, key, value)
+
+
+class SynapseGroup(Node):
+    def __init__(self, pre_group: Union[CurrentInjector, NeuronGroup], post_group: NeuronGroup,
+                 connect_pattern: Optional[Callable] = None, weight_pattern: Optional[Callable] = None,
+                 p=1, **synapse_params):
+        super().__init__()
+        self.pre_group = pre_group
+        self.post_group = post_group
+        self.connect_pattern = connect_pattern
+        self.weight_pattern = weight_pattern
+        self.p = p
+        self.synapses = self.connect(synapse_params)
+
+    def connect(self, synapse_params):
+        """
+        connect this neuron group to another neuron group following the connect_pattern
+        """
+        synapses = []
+        if isinstance(self.pre_group, NeuronGroup):
+            for i, pre_neuron in enumerate(self.pre_group.neurons):
+                for j, post_neuron in enumerate(self.post_group.neurons):
+                    if np.random.rand() <= self.p and (self.connect_pattern is None or self.connect_pattern(i, j)):
+                        weight = self.weight_pattern(i, j) if self.weight_pattern is not None else 1.0
+                        synapse_params["weight"] = weight
+                        synapses.append(Synapse(pre_neuron, post_neuron, **synapse_params))
+        elif isinstance(self.pre_group, CurrentInjector):
+            for j, post_neuron in enumerate(self.post_group.neurons):
+                if np.random.rand() <= self.p and (self.connect_pattern is None or self.connect_pattern(0, j)):
+                    weight = self.weight_pattern(0, j) if self.weight_pattern is not None else 1.0
+                    synapse_params["weight"] = weight
+                    synapses.append(Synapse(self.pre_group, post_neuron, **synapse_params))
+        else:
+            raise ValueError(f"Unsupported pre_group type {type(self.pre_group)}")
+        return synapses
+
+    def step(self, dt=0.01):
+        self.t += dt
+        for synapse in self.synapses:
+            synapse.step(dt)
+
+    def reset(self):
+        self.t = 0.0
+        for synapse in self.synapses:
+            synapse.reset()
+
+    def hyper_parameters(self):
+        return self.synapses[0].hyper_parameters()
+
+    def update_params(self, **params):
+        for synapse in self.synapses:
+            synapse.update_params(**params)
+
 
 class Recorder:
     def __init__(self, t, *nodes_recorded: Neuron):
@@ -223,7 +294,7 @@ class Recorder:
             index = self.nodes_recorded.index(node)
             self.v[index][:, self.t] = node.v
             self.i[index][self.t] = node.current
-        except ValueError as e:
+        except ValueError:
             return
 
     def run_network(self, *synapses):
@@ -233,7 +304,6 @@ class Recorder:
         :return: None
         """
         for synapse in synapses:
-            self.nodes.add(synapse.pre_node)
             self.nodes.add(synapse.post_node)
         for synapse in synapses:
             self.nodes.discard(synapse.pre_node)
@@ -246,30 +316,3 @@ class Recorder:
             for node in self.nodes:
                 node.step(self.dt)
                 self.update(node)
-
-
-if __name__ == '__main__':
-    import plotly.graph_objects as go
-
-
-    def current_fn(t):
-        if t < 10:
-            return 0.0
-        elif t < 20:
-            return 20.0
-        else:
-            return 0.0
-
-
-    current_injector = CurrentInjector(current_fn)
-    neuron = Neuron(l=2000.0)
-    synapse = Synapse(current_injector, neuron, delay=5.0)
-    recorder = Recorder(100, neuron)
-    recorder.run_network(synapse)
-
-    fig = go.Figure(data=[
-        go.Scatter(x=np.arange(0, neuron.l, neuron.dx), y=recorder.v[0, :, i], name=f"t={i * recorder.dt:.2f}",
-                   mode="lines")
-        for i in range(0, recorder.n_t, 200)
-    ])
-    fig.show()
