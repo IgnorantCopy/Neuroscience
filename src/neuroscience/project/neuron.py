@@ -219,10 +219,6 @@ class Synapse(Node):
             'weight': self.weight
         }
 
-    def update_params(self, **params):
-        for key, value in params.items():
-            setattr(self, key, value)
-
 
 class SynapseGroup(Node):
     def __init__(self, pre_group: Union[CurrentInjector, NeuronGroup], post_group: NeuronGroup,
@@ -271,9 +267,11 @@ class SynapseGroup(Node):
     def hyper_parameters(self):
         return self.synapses[0].hyper_parameters()
 
-    def update_params(self, **params):
-        for synapse in self.synapses:
-            synapse.update_params(**params)
+    def update_params(self, connect_pattern=None, weight_pattern=None, p=1, **synapse_params):
+        self.connect_pattern = connect_pattern
+        self.weight_pattern = weight_pattern
+        self.p = p
+        self.synapses = self.connect(synapse_params)
 
 
 class Recorder:
@@ -316,3 +314,9 @@ class Recorder:
             for node in self.nodes:
                 node.step(self.dt)
                 self.update(node)
+
+    def reset(self):
+        self.nodes = set()
+        self.t = 0
+        self.v = [np.ones((len(self.nodes_recorded[i].v), self.n_t)) * self.nodes_recorded[i].v[0] for i in range(len(self.nodes_recorded))] if len(self.nodes_recorded) > 0 else None
+        self.i = [np.zeros(self.n_t) for _ in range(len(self.nodes_recorded))] if len(self.nodes_recorded) > 0 else None

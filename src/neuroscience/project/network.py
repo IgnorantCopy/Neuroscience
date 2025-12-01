@@ -35,7 +35,12 @@ class Network(Node):
             raise ValueError(f"Invalid layer type {type(layer)}")
 
     def add_synapse(self, pre_neuron, post_neuron, synapse_params):
-        synapse = SynapseGroup(pre_neuron, post_neuron, weight_pattern=lambda i, j: np.random.randn(), **synapse_params)
+        weight = synapse_params.get("weight", None)
+        if weight is not None:
+            weight_pattern = lambda i, j: weight
+        else:
+            weight_pattern = synapse_params.get("weight_pattern", lambda i, j: np.random.randn())
+        synapse = SynapseGroup(pre_neuron, post_neuron, weight_pattern=weight_pattern, **synapse_params)
         self.synapses.append(synapse)
 
     def update_synapse(self, index, connect_pattern=None, weight_pattern=None, p=1, **synapse_params):
@@ -79,17 +84,9 @@ class Network(Node):
         self.recoder = recoder
         return recoder
 
-    def run_network(self):
-        """Run the network by running the recoder."""
-        synapses = []
-        for synapse in self.in_synapses:
-            synapses.extend(synapse.synapse_groups)
-        for synapse in self.synapses:
-            synapses.extend(synapse.synapse_groups)
-        self.recoder.run_network(*synapses)
-
     def step(self, dt=0.01):
         self.t += dt
+        self.recoder.t += 1
         for synapses in self.in_synapses:
             for synapse in synapses.synapses:
                 synapse.pre_node.step(dt)
@@ -97,9 +94,11 @@ class Network(Node):
         for synapses in self.synapses:
             for synapse in synapses.synapses:
                 synapse.pre_node.step(dt)
+                self.recoder.update(synapse.pre_node)
                 synapse.step(dt)
         for i, node in enumerate(self.layers[-1].neurons):
             node.step(dt)
+            self.recoder.update(node)
             self.out_spike[i] += node.is_spike()
 
     def reset(self):
@@ -114,6 +113,7 @@ class Network(Node):
             synapse.reset()
 
     def run(self, t, dt=0.01):
+        self.update_recoder(t)
         n_t = int(t / dt)
         for i in range(n_t):
             self.step(dt)

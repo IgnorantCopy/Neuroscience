@@ -22,8 +22,8 @@ class STDP:
                 weight = synapse.weight
                 spike_pre = float(synapse.pre_node.is_spike())
                 spike_post = float(synapse.post_node.is_spike())
-                self.trace_pre[i][j] = self.trace_pre[i][j] - self.trace_pre[i][j] / self.tau_pre + spike_pre
-                self.trace_post[i][j] = self.trace_post[i][j] - self.trace_post[i][j] / self.tau_post + spike_post
+                self.trace_pre[i][j] -= self.trace_pre[i][j] / self.tau_pre + spike_pre
+                self.trace_post[i][j] -= self.trace_post[i][j] / self.tau_post + spike_post
                 delta_w_pre = -self.f_pre(weight) * self.trace_post[i][j] * spike_pre
                 delta_w_post = self.f_post(weight) * self.trace_pre[i][j] * spike_post
                 delta_w[i][j] = delta_w_pre + delta_w_post
