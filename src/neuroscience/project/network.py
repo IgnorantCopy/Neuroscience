@@ -88,14 +88,11 @@ class Network(Node):
         self.t += dt
         self.recoder.t += 1
         for synapses in self.in_synapses:
-            for synapse in synapses.synapses:
-                synapse.pre_node.step(dt)
-                synapse.step(dt)
+            synapses.step(dt)
         for synapses in self.synapses:
-            for synapse in synapses.synapses:
-                synapse.pre_node.step(dt)
-                self.recoder.update(synapse.pre_node)
-                synapse.step(dt)
+            synapses.step(dt)
+            for neuron in synapses.pre_group.neurons:
+                self.recoder.update(neuron)
         for i, node in enumerate(self.layers[-1].neurons):
             node.step(dt)
             self.recoder.update(node)

@@ -256,6 +256,7 @@ class SynapseGroup(Node):
 
     def step(self, dt=0.01):
         self.t += dt
+        self.pre_group.step(dt)
         for synapse in self.synapses:
             synapse.step(dt)
 
