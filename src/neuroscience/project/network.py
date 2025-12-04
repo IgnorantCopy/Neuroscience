@@ -13,12 +13,11 @@ class Network(Node):
         self.make_layers(layers, synapse_params)
         self.out_spike = np.zeros(len(self.layers[-1].neurons))
 
-    def add_current_injector(self, i_fn, **synapses_params) -> CurrentInjector:
+    def add_current_injector(self, i_fn, **synapses_params):
         current_injector = CurrentInjector(i_fn)
         self.injectors.append(current_injector)
         synapses = SynapseGroup(current_injector, self.layers[0], **synapses_params)
         self.in_synapses.append(synapses)
-        return current_injector
 
     def make_layers(self, layers: List[Union[Neuron, NeuronGroup]], synapse_params):
         self.add_layer(layers[0])
@@ -39,7 +38,7 @@ class Network(Node):
         if weight is not None:
             weight_pattern = lambda i, j: weight
         else:
-            weight_pattern = synapse_params.get("weight_pattern", lambda i, j: np.random.randn())
+            weight_pattern = synapse_params.get("weight_pattern", lambda i, j: np.clip(np.random.randn(), -1.5, 1.5))
         synapse = SynapseGroup(pre_neuron, post_neuron, weight_pattern=weight_pattern, **synapse_params)
         self.synapses.append(synapse)
 
@@ -57,32 +56,11 @@ class Network(Node):
         weight_pattern = weight_pattern or self.in_synapses[index].weight_pattern
         self.in_synapses[index].update_params(connect_pattern=connect_pattern, weight_pattern=weight_pattern, p=p, **original_params)
 
-    def add_connect(self, layer1, layer2=-1, connect_pattern=None, p=1, **synapse_params) -> List[Synapse]:
-        """
-        Add synapses between two layers of neurons.
-        :param layer1: Index of the first layer
-        :param layer2: Index of the second layer
-        :param connect_pattern: Connectivity pattern between the two layers
-        :param p: Probability of connection
-        :param synapse_params: Parameters for the synapses
-        :return: The list of synapse
-        """
-        if layer2 == -1:
-            layer2 = layer1 + 1
-        group1 = self.layers[layer1]["group"]
-        group2 = self.layers[layer2]["group"]
-        synapses = group1.connect(group2, connect_pattern, p, **synapse_params)
-        for synapse in synapses:
-            self.synapses.append(synapse)
-        return synapses
-
-    def update_recoder(self, recoder_t) -> Recorder:
+    def update_recoder(self, recoder_t):
         neurons = []
         for layer in self.layers:
             neurons.extend(layer.neurons)
-        recoder = Recorder(recoder_t, *neurons)
-        self.recoder = recoder
-        return recoder
+        self.recoder = Recorder(recoder_t, *neurons)
 
     def step(self, dt=0.01):
         self.t += dt
