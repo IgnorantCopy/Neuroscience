@@ -92,3 +92,14 @@ class Network(Node):
         n_t = int(t / dt)
         for i in range(n_t):
             self.step(dt)
+
+    def save_weights(self, path):
+        for i, synapse_group in enumerate(self.synapses):
+            weights = np.array([s.weight for s in synapse_group.synapses])
+            np.save(f"{path}/synapses_{i}.npy", weights)
+
+    def load_weights(self, path):
+        for i, synapse_group in enumerate(self.synapses):
+            weights = np.load(f"{path}/synapses_{i}.npy")
+            for j, s in enumerate(synapse_group.synapses):
+                s.weight = weights[j]
